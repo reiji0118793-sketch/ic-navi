@@ -198,7 +198,8 @@ const ICS = [
 ];
 const VALHALLA = 'https://valhalla1.openstreetmap.de';
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
-const GSI_ADDR = 'https://msearch.gsi.go.jp/address-search/AddressSearch';
+const OSRM = 'https://router.project-osrm.org';
+const GSI_ADDR ='https://msearch.gsi.go.jp/address-search/AddressSearch';
 
 /* ---------- 保存 ---------- */
 const store = {
@@ -261,6 +262,16 @@ async function valhalla(path, body){
   return j;
 }
 const loc = p => ({lat:p.lat, lon:p.lng});
+
+/* 各IC→目的地の所要時間（秒）をOSRMで一括取得。ICの順位付けだけに使う */
+async function osrmLeg2(d){
+  const pts = ICS.concat([d]).map(p=>p.lng.toFixed(6)+','+p.lat.toFixed(6)).join(';');
+  const src = ICS.map((_,i)=>i).join(';');
+  const r = await fetch(OSRM+'/table/v1/driving/'+pts+'?sources='+src+'&destinations='+ICS.length+'&annotations=duration');
+  const j = await r.json();
+  if(!r.ok || j.code!=='Ok') throw new Error(j.message || 'OSRM error');
+  return j.durations.map(row=>row[0]);
+}
 const AUTO_FREE = {auto:{use_tolls:0}};
 
 /* 住所らしい入力か（番地の数字や、都道府県・市区町村を含む） */
@@ -383,34 +394,38 @@ async function calculate(){
     if(S.originMode==='here') S.origin = o;
     const d = S.dest;
 
-    // 1) 無料の経路サーバーで、全ICを一括比較（出発地→IC は有料道路なし / IC→目的地 は高速あり）
-    const m1 = await valhalla('sources_to_targets', {sources:[loc(o)], targets:ICS.map(loc), costing:'auto', costing_options:AUTO_FREE});
-    const m2 = await valhalla('sources_to_targets', {sources:ICS.map(loc), targets:[loc(d)], costing:'auto'});
-    const direct = await valhalla('route', {locations:[loc(o),loc(d)], costing:'auto', directions_type:'none', units:'km'});
-    const free = await valhalla('route', {locations:[loc(o),loc(d)], costing:'auto', costing_options:AUTO_FREE, directions_type:'none', units:'km'});
-
-    // 公開サーバーは遠距離だと一括計算の結果を返さないことがあるので、欠けた分は1本ずつ計算する
-    const leg2 = [];
-    for(let i=0;i<ICS.length;i++){
-      const b = m2.sources_to_targets[i][0];
-      if(b && b.time!=null){ leg2.push(b); continue; }
-      try{
-        const r = await valhalla('route', {locations:[loc(ICS[i]),loc(d)], costing:'auto', directions_type:'none', units:'km'});
-        leg2.push({time:r.trip.summary.time, distance:r.trip.summary.length});
-      }catch(e){ leg2.push(null); }
+    // 1) 出発地→各IC（有料道路なし）。近距離なのでValhallaの一括計算で求める
+    let m1;
+    try{
+      m1 = await valhalla('sources_to_targets', {sources:[loc(o)], targets:ICS.map(loc), costing:'auto', costing_options:AUTO_FREE});
+    }catch(e){
+      throw new Error('出発地から福岡周辺のICまでが遠すぎて計算できません（出発地は福岡周辺にしてください）');
     }
+
+    // 2) 各IC→目的地（高速あり）で、ICをおおまかに順位付けする。
+    //    Valhallaの一括計算は150km超でエラーになるため、距離制限のないOSRMを使う
+    const rough = await osrmLeg2(d).catch(()=>null);
+
     let cands = ICS.map((ic,i)=>{
-      const a = m1.sources_to_targets[0][i], b = leg2[i];
-      if(!a || !b || a.time==null || b.time==null) return null;
-      return {ic, t1:a.time, t2:b.time, total:a.time+b.time, d1:a.distance*1000, d2:b.distance*1000};
-    }).filter(Boolean).sort((x,y)=>x.total-y.total);
+      const a = m1.sources_to_targets[0][i];
+      if(!a || a.time==null) return null;
+      const r2 = rough ? rough[i] : 0;
+      if(r2==null) return null;
+      return {ic, t1:a.time, d1:a.distance*1000, rough:a.time+r2};
+    }).filter(Boolean).sort((x,y)=>x.rough-y.rough).slice(0,5);   // OSRMとValhallaで見積もりが少しずれるので多めに残す
     if(!cands.length) throw new Error('ICを経由するルートが見つかりませんでした');
 
-    const ds = direct.trip.summary, fs = free.trip.summary;
+    // 3) 上位5つのIC→目的地と、都市高速を使うルートを、同じValhallaで正確に計算する（時間の比較をそろえるため）
+    setStatus('上位のICを詳しく計算中…');
+    const routeTime = async (a,b)=>{ const r = await valhalla('route', {locations:[loc(a),loc(b)], costing:'auto', directions_type:'none', units:'km'}); return r.trip.summary; };
+    const [direct, ...legs] = await Promise.all([routeTime(o,d)].concat(cands.map(c=>routeTime(c.ic,d).catch(()=>null))));
+    cands.forEach((c,i)=>{ const s = legs[i]; if(s){ c.t2 = s.time; c.d2 = s.length*1000; c.total = c.t1 + c.t2; } });
+    cands = cands.filter(c=>c.total!=null).sort((x,y)=>x.total-y.total).slice(0,4);
+    if(!cands.length) throw new Error('ICから目的地までのルートが見つかりませんでした');
+
     let res = {o, d, engine:'free',
-      fast:{time:ds.time, dist:ds.length*1000, toll:null},
-      free:{time:fs.time, dist:fs.length*1000},
-      cands: cands.slice(0,4)};
+      fast:{time:direct.time, dist:direct.length*1000, toll:null},
+      cands};
 
     // 2) Google APIキーがあれば、上位2つのICとおまかせルートを渋滞込みで計算し直す
     if(S.apiKey){
