@@ -167,11 +167,6 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
       <div class="picked none" id="homePicked">未設定</div>
     </div>
     <div class="card">
-      <label class="lbl">Google APIキー（任意）</label>
-      <div class="row"><input type="password" id="apiKey" placeholder="未設定なら無料モード" autocomplete="off"></div>
-      <p class="note">入れると、渋滞を反映した所要時間（Routes API）と、店名などでの場所検索（Places API）を使います。キーはこの端末の中だけに保存されます。Google Cloudでこのページのアドレスだけに使えるよう制限をかけてください。</p>
-    </div>
-    <div class="card">
       <label class="lbl">案内リンク</label>
       <label class="chk"><input type="checkbox" id="useGuides" checked> ICまでのルートに経由地を入れて、都市高速に乗らないようにする</label>
       <label class="chk"><input type="checkbox" id="showAndroid"> Android向け2段階案内を常に表示</label>
@@ -210,7 +205,8 @@ const S = {
   origin: null, dest: null,
   home: store.get('home', null),
   favs: store.get('favs', []),
-  apiKey: store.get('apiKey', ''),
+  // Google APIキーの入力欄は画面から外した。コードの中でここに直接キーを書けば、Googleの時間計算と検索に切り替わる
+  apiKey: '',
   useGuides: store.get('useGuides', true),
   showAndroid: store.get('showAndroid', false),
   result: null, selected: 0,
@@ -476,7 +472,7 @@ async function render(){
   const R = S.result; if(!R) return;
   const c = R.cands[S.selected];
   $('result').classList.remove('hidden');
-  $('engine').textContent = R.engine==='google' ? '所要時間: Google（渋滞反映）' : '所要時間: 無料モード（渋滞なしの目安）';
+  $('engine').textContent = R.engine==='google' ? '所要時間: Google（渋滞反映）' : '所要時間は渋滞なしの目安です';
   $('tIc').textContent = fmtTime(c.total);
   $('sIc').textContent = c.ic.name+'まで '+fmtTime(c.t1);
   $('tFast').textContent = fmtTime(R.fast.time);
@@ -585,8 +581,6 @@ $('calc').onclick = calculate;
 $('openSettings').onclick = ()=>$('settings').classList.remove('hidden');
 $('closeSettings').onclick = ()=>{ $('settings').classList.add('hidden'); if(S.result) render(); };
 $('settings').onclick = e=>{ if(e.target.id==='settings') $('closeSettings').onclick(); };
-$('apiKey').value = S.apiKey;
-$('apiKey').onchange = e=>{ S.apiKey = e.target.value.trim(); store.set('apiKey', S.apiKey); };
 $('useGuides').checked = S.useGuides;
 $('useGuides').onchange = e=>{ S.useGuides = e.target.checked; store.set('useGuides', S.useGuides); };
 $('showAndroid').checked = S.showAndroid;

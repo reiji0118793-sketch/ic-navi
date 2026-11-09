@@ -24,13 +24,13 @@ ICの選び方は常にValhallaで計算し、APIキーがあるときは上位2
 3. `https://<ユーザー名>.github.io/ic-navi/` をスマホで開く
 4. ホーム画面に追加する（Android: メニュー →「ホーム画面に追加」、iPhone: 共有 →「ホーム画面に追加」）
 
-## Google APIキー（任意）
+## Google APIキー（任意・画面からは非表示）
+画面のAPIキー入力欄は外してある。使う場合は `index.html` の `apiKey: ''` にキーを書く（公開リポジトリなので、必ず下記の制限をかけること）。
 1. Google Cloudでプロジェクトを作り、課金を有効にする
 2. 「Routes API」と「Places API (New)」を有効にする
 3. APIキーを作り、次の制限をかける
    - アプリケーションの制限: ウェブサイト → `https://<ユーザー名>.github.io/*`
    - APIの制限: Routes API と Places API (New) のみ
-4. アプリの⚙設定にキーを貼る（キーはその端末のlocalStorageにだけ保存される）
 
 ## 手元で動かす
 ```
