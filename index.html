@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>IC経由ナビ</title>
+<meta name="description" content="福岡都市高速を使わず、一般道でNEXCOのICまで行ってから高速に乗るルートをGoogleマップで案内します。">
+<meta name="theme-color" content="#0f6e56">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="IC経由ナビ">
+<style>
+:root{
+  --bg:#f4f6f5; --card:#ffffff; --text:#1b2420; --sub:#5d6b65; --line:#dfe5e2;
+  --accent:#0f6e56; --accent-weak:#e2f1ec; --warn:#a4570a; --warn-weak:#fcefdf;
+  --fast:#2d5bd1; --fast-weak:#e6ecfb; --danger:#b3261e;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#111614; --card:#1a211e; --text:#e7eeea; --sub:#9aa8a1; --line:#2c3632;
+    --accent:#3fbf98; --accent-weak:#16302a; --warn:#f0a85a; --warn-weak:#3a2a17;
+    --fast:#86a6ff; --fast-weak:#1d2640; --danger:#ff8a80;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111614; --card:#1a211e; --text:#e7eeea; --sub:#9aa8a1; --line:#2c3632;
+  --accent:#3fbf98; --accent-weak:#16302a; --warn:#f0a85a; --warn-weak:#3a2a17;
+  --fast:#86a6ff; --fast-weak:#1d2640; --danger:#ff8a80;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%}
+main{max-width:560px;margin:0 auto;padding:16px 16px calc(32px + env(safe-area-inset-bottom))}
+header{display:flex;align-items:center;justify-content:space-between;margin:4px 0 14px}
+h1{font-size:20px;margin:0;letter-spacing:.02em}
+h1 small{display:block;font-size:12px;font-weight:400;color:var(--sub)}
+.icon-btn{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:10px;width:42px;height:42px;font-size:20px;cursor:pointer}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+label.lbl{display:block;font-size:13px;color:var(--sub);margin-bottom:6px;font-weight:600}
+.row{display:flex;gap:8px}
+input[type=text],input[type=password]{flex:1;min-width:0;font-size:16px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text)}
+button{font:inherit}
+.btn{border:0;border-radius:10px;padding:11px 14px;font-weight:600;cursor:pointer;background:var(--accent-weak);color:var(--accent);white-space:nowrap}
+.btn.primary{background:var(--accent);color:#fff;width:100%;padding:14px;font-size:17px}
+.btn:disabled{opacity:.5;cursor:default}
+.seg{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.seg button{border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:999px;padding:6px 12px;font-size:14px;cursor:pointer}
+.seg button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.picked{margin-top:8px;font-size:14px;color:var(--accent);font-weight:600;word-break:break-all}
+.picked.none{color:var(--sub);font-weight:400}
+.results-list{list-style:none;margin:8px 0 0;padding:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.results-list li{padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:14px}
+.results-list li:last-child{border-bottom:0}
+.results-list li:hover{background:var(--accent-weak)}
+.results-list li small{display:block;color:var(--sub);font-size:12px}
+.favs{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.fav{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;background:var(--bg);font-size:13px;overflow:hidden}
+.fav button{border:0;background:none;color:var(--text);padding:5px 10px;cursor:pointer}
+.fav button.x{padding:5px 8px 5px 2px;color:var(--sub)}
+.linkbtn{background:none;border:0;color:var(--accent);padding:0;font-size:13px;cursor:pointer;text-decoration:underline}
+.status{font-size:14px;color:var(--sub);text-align:center;padding:10px 0}
+.status.err{color:var(--danger)}
+.summary{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.stat{border-radius:12px;padding:10px 12px}
+.stat .k{font-size:12px;font-weight:600}
+.stat .v{font-size:22px;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums}
+.stat .s{font-size:12px;color:var(--sub)}
+.stat.ic{background:var(--accent-weak)} .stat.ic .k{color:var(--accent)}
+.stat.fast{background:var(--fast-weak)} .stat.fast .k{color:var(--fast)}
+.diff{font-size:15px;padding:10px 12px;border-radius:10px;background:var(--warn-weak);color:var(--warn);font-weight:600;margin-bottom:10px}
+.diff.good{background:var(--accent-weak);color:var(--accent)}
+.ic-opt{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px;cursor:pointer;background:var(--bg)}
+.ic-opt.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.ic-opt .dot{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);flex:none}
+.ic-opt.on .dot{border:6px solid var(--accent)}
+.ic-opt .nm{font-weight:700}
+.ic-opt .meta{font-size:12px;color:var(--sub)}
+.ic-opt .tt{margin-left:auto;text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+.ic-opt .tt small{display:block;font-weight:400;font-size:12px;color:var(--sub)}
+.go{display:block;text-align:center;text-decoration:none;border-radius:12px;padding:14px;font-weight:700;font-size:17px;margin-top:8px}
+.go.main{background:var(--accent);color:#fff}
+.go.sub{background:var(--accent-weak);color:var(--accent);font-size:15px}
+.go.fastgo{background:var(--fast-weak);color:var(--fast);font-size:15px}
+.go small{display:block;font-weight:400;font-size:12px;opacity:.85}
+.steps{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.note{font-size:12px;color:var(--sub);margin:8px 0 0}
+details summary{cursor:pointer;font-weight:600;font-size:14px}
+.chk{display:flex;align-items:center;gap:8px;font-size:14px;margin-top:8px}
+.hidden{display:none !important}
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:10}
+.sheet .panel{background:var(--card);width:100%;max-width:560px;border-radius:16px 16px 0 0;padding:16px 16px calc(20px + env(safe-area-inset-bottom));max-height:88vh;overflow:auto}
+.sheet h2{font-size:17px;margin:0 0 10px}
+.engine{font-size:12px;color:var(--sub);text-align:right;margin-top:-4px;margin-bottom:8px}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>IC経由ナビ<small>都市高速を避けて、一般道でICまで行く</small></h1>
+    <button class="icon-btn" id="openSettings" aria-label="設定">⚙</button>
+  </header>
+
+  <section class="card">
+    <label class="lbl">出発地</label>
+    <div class="seg" id="originSeg">
+      <button data-mode="here" class="on">現在地</button>
+      <button data-mode="home">自宅</button>
+      <button data-mode="custom">場所を指定</button>
+    </div>
+    <div id="originSearch" class="hidden">
+      <div class="row"><input type="text" id="originQ" placeholder="例: 博多駅" enterkeyhint="search"><button class="btn" id="originGo">検索</button></div>
+      <ul class="results-list hidden" id="originResults"></ul>
+    </div>
+    <div class="picked none" id="originPicked">現在地を使います</div>
+  </section>
+
+  <section class="card">
+    <label class="lbl">目的地</label>
+    <div class="row"><input type="text" id="destQ" placeholder="例: 熊本城、長崎駅、別府" enterkeyhint="search"><button class="btn" id="destGo">検索</button></div>
+    <ul class="results-list hidden" id="destResults"></ul>
+    <div class="picked none" id="destPicked">まだ選ばれていません</div>
+    <div class="favs" id="favs"></div>
+    <button class="linkbtn hidden" id="saveFav">この目的地をお気に入りに追加</button>
+  </section>
+
+  <button class="btn primary" id="calc" disabled>ルートを比較する</button>
+  <div class="status" id="status"></div>
+
+  <section id="result" class="hidden">
+    <div class="engine" id="engine"></div>
+    <div class="summary">
+      <div class="stat ic"><div class="k">ICまで一般道</div><div class="v" id="tIc">-</div><div class="s" id="sIc"></div></div>
+      <div class="stat fast"><div class="k">都市高速を使う</div><div class="v" id="tFast">-</div><div class="s" id="sFast"></div></div>
+    </div>
+    <div class="diff" id="diff"></div>
+
+    <div class="card">
+      <label class="lbl">乗るIC（速い順）</label>
+      <div id="icList"></div>
+
+      <a class="go main" id="goOne" target="_blank" rel="noopener">Googleマップで案内<small id="goOneSub"></small></a>
+
+      <div id="androidBox" class="hidden">
+        <p class="note" style="margin-top:12px"><b>Android向け 2段階案内</b>（有料道路を使わない設定でICまで案内 → ICで2を押す）</p>
+        <div class="steps">
+          <a class="go sub" id="goStep1">① ICまで<small>有料道路なし</small></a>
+          <a class="go sub" id="goStep2" target="_blank" rel="noopener">② ICから目的地<small>高速を使う</small></a>
+        </div>
+      </div>
+
+      <a class="go fastgo" id="goFast" target="_blank" rel="noopener">急ぐときは都市高速で案内<small>Googleマップのおまかせルート</small></a>
+      <p class="note" id="guideNote"></p>
+    </div>
+  </section>
+
+  <p class="note">所要時間は目安です。無料モードは渋滞を考慮しません。高速道路の利用は自己責任で、運転中は操作しないでください。</p>
+</main>
+
+<div class="sheet hidden" id="settings">
+  <div class="panel">
+    <h2>設定</h2>
+    <div class="card">
+      <label class="lbl">自宅（出発地の「自宅」で使う）</label>
+      <div class="row"><input type="text" id="homeQ" placeholder="住所や駅名" enterkeyhint="search"><button class="btn" id="homeGo">検索</button></div>
+      <ul class="results-list hidden" id="homeResults"></ul>
+      <div class="picked none" id="homePicked">未設定</div>
+    </div>
+    <div class="card">
+      <label class="lbl">Google APIキー（任意）</label>
+      <div class="row"><input type="password" id="apiKey" placeholder="未設定なら無料モード" autocomplete="off"></div>
+      <p class="note">入れると、渋滞を反映した所要時間（Routes API）と、店名などでの場所検索（Places API）を使います。キーはこの端末の中だけに保存されます。Google Cloudでこのページのアドレスだけに使えるよう制限をかけてください。</p>
+    </div>
+    <div class="card">
+      <label class="lbl">案内リンク</label>
+      <label class="chk"><input type="checkbox" id="useGuides" checked> ICまでのルートに経由地を入れて、都市高速に乗らないようにする</label>
+      <label class="chk"><input type="checkbox" id="showAndroid"> Android向け2段階案内を常に表示</label>
+    </div>
+    <button class="btn primary" id="closeSettings">閉じる</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ---------- データ: NEXCOのIC ----------
+   座標は「ICのランプが一般道に接続する地点」（OpenStreetMapから抽出）。
+   料金所の座標だとOSM上で有料区間扱いになり遠回り判定されるため、一般道側の点を使う。 */
+const ICS = [
+  {id:'koga',     name:'古賀IC',   road:'九州道', area:'北九州・東九州方面',   lat:33.72045, lng:130.48411},
+  {id:'wakamiya', name:'若宮IC',   road:'九州道', area:'北九州方面',          lat:33.74439, lng:130.61037},
+  {id:'fukuoka',  name:'福岡IC',   road:'九州道', area:'北九州・熊本・大分方面', lat:33.62865, lng:130.48563},
+  {id:'dazaifu',  name:'太宰府IC', road:'九州道', area:'熊本・大分・佐賀・長崎方面', lat:33.53015, lng:130.49244},
+  {id:'chikushino',name:'筑紫野IC',road:'九州道', area:'熊本・大分・佐賀・長崎方面', lat:33.47635, lng:130.51482},
+  {id:'tosu',     name:'鳥栖IC',   road:'長崎道', area:'佐賀・長崎方面',      lat:33.39441, lng:130.52179},
+  {id:'imajuku',  name:'今宿IC',   road:'西九州道', area:'糸島・唐津方面',    lat:33.57245, lng:130.27431},
+  {id:'maebaru',  name:'前原IC',   road:'西九州道', area:'糸島・唐津方面',    lat:33.54167, lng:130.19910},
+];
+const VALHALLA = 'https://valhalla1.openstreetmap.de';
+const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
+
+/* ---------- 保存 ---------- */
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem('icnavi.'+k); return v===null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem('icnavi.'+k, JSON.stringify(v)); }catch(e){} }
+};
+const S = {
+  originMode: store.get('originMode','here'),
+  origin: null, dest: null,
+  home: store.get('home', null),
+  favs: store.get('favs', []),
+  apiKey: store.get('apiKey', ''),
+  useGuides: store.get('useGuides', true),
+  showAndroid: store.get('showAndroid', false),
+  result: null, selected: 0,
+};
+const $ = id => document.getElementById(id);
+const isAndroid = /Android/i.test(navigator.userAgent);
+
+/* ---------- 便利関数 ---------- */
+function fmtTime(sec){
+  if(sec==null||!isFinite(sec)) return '-';
+  const m = Math.round(sec/60);
+  if(m < 60) return m+'分';
+  return Math.floor(m/60)+'時間'+(m%60 ? (m%60)+'分' : '');
+}
+const fmtKm = m => m==null ? '' : (m/1000).toFixed(m<10000?1:0)+'km';
+const ll = p => p.lat.toFixed(6)+','+p.lng.toFixed(6);
+function setStatus(msg, err){ const el=$('status'); el.textContent=msg||''; el.className='status'+(err?' err':''); }
+function decodePolyline(str, precision){
+  const f = Math.pow(10, precision); let i=0, lat=0, lng=0; const out=[];
+  while(i < str.length){
+    for(const k of [0,1]){
+      let b, shift=0, res=0;
+      do{ b = str.charCodeAt(i++) - 63; res |= (b & 0x1f) << shift; shift += 5; }while(b >= 0x20);
+      const d = (res & 1) ? ~(res >> 1) : (res >> 1);
+      if(k===0) lat += d; else lng += d;
+    }
+    out.push({lat:lat/f, lng:lng/f});
+  }
+  return out;
+}
+function haversine(a,b){
+  const R=6371000, r=Math.PI/180, dLa=(b.lat-a.lat)*r, dLo=(b.lng-a.lng)*r;
+  const x=Math.sin(dLa/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLo/2)**2;
+  return 2*R*Math.asin(Math.sqrt(x));
+}
+/* ルート形状から、指定した割合の地点を取り出す（経由地用） */
+function pointsAlong(shape, fracs){
+  const cum=[0]; for(let i=1;i<shape.length;i++) cum.push(cum[i-1]+haversine(shape[i-1],shape[i]));
+  const total=cum[cum.length-1];
+  return fracs.map(f=>{ const t=total*f; let i=cum.findIndex(c=>c>=t); if(i<0) i=shape.length-1; return shape[i]; });
+}
+
+/* ---------- 外部API ---------- */
+async function valhalla(path, body){
+  const r = await fetch(VALHALLA+'/'+path+'?json='+encodeURIComponent(JSON.stringify(body)));
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error || ('経路サーバーのエラー ('+r.status+')'));
+  return j;
+}
+const loc = p => ({lat:p.lat, lon:p.lng});
+const AUTO_FREE = {auto:{use_tolls:0}};
+
+async function searchPlaces(q){
+  if(S.apiKey){
+    const r = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Goog-Api-Key':S.apiKey,'X-Goog-FieldMask':'places.displayName,places.formattedAddress,places.location'},
+      body: JSON.stringify({textQuery:q, languageCode:'ja', regionCode:'JP',
+        locationBias:{circle:{center:{latitude:33.59,longitude:130.42},radius:50000}}})
+    });
+    const j = await r.json();
+    if(!r.ok) throw new Error('Places API: '+(j.error && j.error.message || r.status));
+    return (j.places||[]).map(p=>({name:p.displayName && p.displayName.text || q, addr:p.formattedAddress||'', lat:p.location.latitude, lng:p.location.longitude}));
+  }
+  const u = NOMINATIM+'?format=jsonv2&limit=6&countrycodes=jp&accept-language=ja&viewbox=129.6,34.3,131.9,31.9&q='+encodeURIComponent(q);
+  const r = await fetch(u); if(!r.ok) throw new Error('場所検索のエラー ('+r.status+')');
+  const j = await r.json();
+  return j.map(p=>({name:p.name || p.display_name.split(',')[0], addr:p.display_name, lat:+p.lat, lng:+p.lon}));
+}
+/* 「33.59,130.42」形式や GoogleマップのURL(@緯度,経度) をそのまま受け付ける */
+function parseCoords(q){
+  const m = q.match(/@?(-?\d{1,2}\.\d+)\s*,\s*(-?\d{2,3}\.\d+)/);
+  return m ? {name:'指定した地点', addr:m[1]+','+m[2], lat:+m[1], lng:+m[2]} : null;
+}
+
+async function googleRoute(o, d, avoidTolls){
+  const r = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-Goog-Api-Key':S.apiKey,
+      'X-Goog-FieldMask':'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo'},
+    body: JSON.stringify({
+      origin:{location:{latLng:{latitude:o.lat,longitude:o.lng}}},
+      destination:{location:{latLng:{latitude:d.lat,longitude:d.lng}}},
+      travelMode:'DRIVE', routingPreference:'TRAFFIC_AWARE',
+      routeModifiers:{avoidTolls:!!avoidTolls},
+      extraComputations:['TOLLS'], languageCode:'ja', units:'METRIC'
+    })
+  });
+  const j = await r.json();
+  if(!r.ok) throw new Error('Routes API: '+(j.error && j.error.message || r.status));
+  const rt = j.routes && j.routes[0]; if(!rt) throw new Error('Googleでルートが見つかりませんでした');
+  let toll = null;
+  const tp = rt.travelAdvisory && rt.travelAdvisory.tollInfo && rt.travelAdvisory.tollInfo.estimatedPrice;
+  if(tp && tp.length){ const y = tp.find(p=>p.currencyCode==='JPY') || tp[0]; toll = (+y.units||0) + (y.nanos||0)/1e9; }
+  return {time: parseInt(rt.duration,10), dist: rt.distanceMeters,
+          shape: rt.polyline ? decodePolyline(rt.polyline.encodedPolyline,5) : null, toll};
+}
+
+/* ---------- 現在地 ---------- */
+function getHere(){
+  return new Promise((res, rej)=>{
+    if(!navigator.geolocation) return rej(new Error('この端末では現在地が使えません'));
+    navigator.geolocation.getCurrentPosition(
+      p=>res({name:'現在地', lat:p.coords.latitude, lng:p.coords.longitude, here:true}),
+      e=>rej(new Error('現在地を取得できませんでした（位置情報の許可を確認してください）')),
+      {enableHighAccuracy:true, timeout:15000, maximumAge:60000});
+  });
+}
+
+/* ---------- 計算 ---------- */
+async function calculate(){
+  setStatus('計算中…'); $('result').classList.add('hidden'); $('calc').disabled = true;
+  try{
+    let o = S.originMode==='here' ? await getHere() : (S.originMode==='home' ? S.home : S.origin);
+    if(!o) throw new Error('出発地を選んでください');
+    if(S.originMode==='here') S.origin = o;
+    const d = S.dest;
+
+    // 1) 無料の経路サーバーで、全ICを一括比較（出発地→IC は有料道路なし / IC→目的地 は高速あり）
+    const m1 = await valhalla('sources_to_targets', {sources:[loc(o)], targets:ICS.map(loc), costing:'auto', costing_options:AUTO_FREE});
+    const m2 = await valhalla('sources_to_targets', {sources:ICS.map(loc), targets:[loc(d)], costing:'auto'});
+    const direct = await valhalla('route', {locations:[loc(o),loc(d)], costing:'auto', directions_type:'none', units:'km'});
+    const free = await valhalla('route', {locations:[loc(o),loc(d)], costing:'auto', costing_options:AUTO_FREE, directions_type:'none', units:'km'});
+
+    // 公開サーバーは遠距離だと一括計算の結果を返さないことがあるので、欠けた分は1本ずつ計算する
+    const leg2 = [];
+    for(let i=0;i<ICS.length;i++){
+      const b = m2.sources_to_targets[i][0];
+      if(b && b.time!=null){ leg2.push(b); continue; }
+      try{
+        const r = await valhalla('route', {locations:[loc(ICS[i]),loc(d)], costing:'auto', directions_type:'none', units:'km'});
+        leg2.push({time:r.trip.summary.time, distance:r.trip.summary.length});
+      }catch(e){ leg2.push(null); }
+    }
+    let cands = ICS.map((ic,i)=>{
+      const a = m1.sources_to_targets[0][i], b = leg2[i];
+      if(!a || !b || a.time==null || b.time==null) return null;
+      return {ic, t1:a.time, t2:b.time, total:a.time+b.time, d1:a.distance*1000, d2:b.distance*1000};
+    }).filter(Boolean).sort((x,y)=>x.total-y.total);
+    if(!cands.length) throw new Error('ICを経由するルートが見つかりませんでした');
+
+    const ds = direct.trip.summary, fs = free.trip.summary;
+    let res = {o, d, engine:'free',
+      fast:{time:ds.time, dist:ds.length*1000, toll:null},
+      free:{time:fs.time, dist:fs.length*1000},
+      cands: cands.slice(0,4)};
+
+    // 2) Google APIキーがあれば、上位2つのICとおまかせルートを渋滞込みで計算し直す
+    if(S.apiKey){
+      setStatus('Googleで渋滞を反映中…');
+      const fast = await googleRoute(o, d, false);
+      res.fast = {time:fast.time, dist:fast.dist, toll:fast.toll};
+      for(const c of res.cands.slice(0,2)){
+        const [g1, g2] = await Promise.all([googleRoute(o, c.ic, true), googleRoute(c.ic, d, false)]);
+        Object.assign(c, {t1:g1.time, t2:g2.time, total:g1.time+g2.time, d1:g1.dist, d2:g2.dist, shape:g1.shape, toll:g2.toll, google:true});
+      }
+      res.cands.sort((x,y)=>(y.google?1:0)-(x.google?1:0) || x.total-y.total);
+      res.engine = 'google';
+    }
+    S.result = res; S.selected = 0;
+    await render();
+    setStatus('');
+  }catch(e){
+    setStatus(e.message || String(e), true);
+  }finally{
+    $('calc').disabled = !S.dest;
+  }
+}
+
+/* ICまでの一般道ルートの形を取得（経由地をつくるため） */
+async function ensureShape(c, o){
+  if(c.shape) return c.shape;
+  const r = await valhalla('route', {locations:[loc(o),loc(c.ic)], costing:'auto', costing_options:AUTO_FREE, directions_type:'none'});
+  c.shape = decodePolyline(r.trip.legs[0].shape, 6);
+  return c.shape;
+}
+
+/* ---------- 表示 ---------- */
+function mapsUrl(o, d, waypoints){
+  const p = new URLSearchParams({api:'1', travelmode:'driving', dir_action:'navigate'});
+  if(o && !o.here) p.set('origin', ll(o));
+  p.set('destination', ll(d));
+  if(waypoints && waypoints.length) p.set('waypoints', waypoints.map(ll).join('|'));
+  return 'https://www.google.com/maps/dir/?'+p.toString();
+}
+function androidNavIntent(p){
+  const fallback = encodeURIComponent(mapsUrl(null, p));
+  return 'intent:q='+ll(p)+'&avoid=t#Intent;scheme=google.navigation;package=com.google.android.apps.maps;S.browser_fallback_url='+fallback+';end';
+}
+
+async function render(){
+  const R = S.result; if(!R) return;
+  const c = R.cands[S.selected];
+  $('result').classList.remove('hidden');
+  $('engine').textContent = R.engine==='google' ? '所要時間: Google（渋滞反映）' : '所要時間: 無料モード（渋滞なしの目安）';
+  $('tIc').textContent = fmtTime(c.total);
+  $('sIc').textContent = c.ic.name+'まで '+fmtTime(c.t1);
+  $('tFast').textContent = fmtTime(R.fast.time);
+  $('sFast').textContent = fmtKm(R.fast.dist) + (R.fast.toll!=null ? ' / 料金 約'+Math.round(R.fast.toll).toLocaleString()+'円' : '');
+
+  const diffMin = Math.round((c.total - R.fast.time)/60);
+  const df = $('diff');
+  if(diffMin > 0){ df.className='diff'; df.textContent = '都市高速を使うと 約'+diffMin+'分 早く着きます'; }
+  else { df.className='diff good'; df.textContent = 'IC経由でも時間はほぼ同じです（都市高速を使う必要なし）'; }
+  if(c.toll!=null && R.fast.toll!=null){
+    const save = Math.round(R.fast.toll - c.toll);
+    if(save > 0) df.textContent += ' / IC経由なら料金 約'+save.toLocaleString()+'円 おトク';
+  }
+
+  $('icList').innerHTML = '';
+  R.cands.forEach((x,i)=>{
+    const el = document.createElement('div');
+    el.className = 'ic-opt'+(i===S.selected?' on':'');
+    el.innerHTML = '<span class="dot"></span><div><div class="nm"></div><div class="meta"></div></div><div class="tt"><span class="tot"></span><small></small></div>';
+    el.querySelector('.nm').textContent = x.ic.name;
+    el.querySelector('.meta').textContent = x.ic.road+'・'+x.ic.area;
+    el.querySelector('.tot').textContent = fmtTime(x.total);
+    el.querySelector('small').textContent = 'ICまで '+fmtTime(x.t1)+(R.engine==='google' && !x.google ? '（目安）' : '');
+    el.onclick = ()=>{ S.selected = i; render(); };
+    $('icList').appendChild(el);
+  });
+
+  // 案内リンク
+  const o = R.o, d = R.d;
+  let wps = [c.ic], note = '';
+  if(S.useGuides){
+    try{
+      const shape = await ensureShape(c, o);
+      const dist = c.d1 || 0;
+      const fr = dist > 18000 ? [0.33, 0.66] : (dist > 6000 ? [0.5] : []);
+      wps = pointsAlong(shape, fr).concat([c.ic]);
+      if(fr.length) note = 'ICまでの一般道ルート上に経由地を'+fr.length+'か所入れています。Googleマップで「経由地」と表示されますが、そのまま進んでOKです。';
+    }catch(e){ note = '経由地の作成に失敗したため、ICだけを経由地にしています。'; }
+  }
+  note += (note?' ':'')+'最後の経由地はICの入口なので、そこから高速に入ります。';
+  $('guideNote').textContent = note;
+  $('goOne').href = mapsUrl(o, d, wps);
+  $('goOneSub').textContent = c.ic.name+' から'+c.ic.road+'へ';
+  $('goFast').href = mapsUrl(o, d, null);
+  $('androidBox').classList.toggle('hidden', !(isAndroid || S.showAndroid));
+  $('goStep1').href = androidNavIntent(c.ic);
+  $('goStep2').href = mapsUrl(null, d, null);
+}
+
+/* ---------- 検索UI ---------- */
+function wireSearch(inputId, btnId, listId, onPick){
+  const run = async ()=>{
+    const q = $(inputId).value.trim(); if(!q) return;
+    const list = $(listId); list.innerHTML = '<li>検索中…</li>'; list.classList.remove('hidden');
+    try{
+      const c = parseCoords(q);
+      const items = c ? [c] : await searchPlaces(q);
+      list.innerHTML = '';
+      if(!items.length){ list.innerHTML = '<li>見つかりませんでした。別の言い方（市町村名を足すなど）で試してください</li>'; return; }
+      items.forEach(it=>{
+        const li = document.createElement('li');
+        li.textContent = it.name; const s = document.createElement('small'); s.textContent = it.addr; li.appendChild(s);
+        li.onclick = ()=>{ list.classList.add('hidden'); onPick({name:it.name, lat:it.lat, lng:it.lng}); };
+        list.appendChild(li);
+      });
+    }catch(e){ list.innerHTML = ''; const li=document.createElement('li'); li.textContent=e.message; list.appendChild(li); }
+  };
+  $(btnId).onclick = run;
+  $(inputId).addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); run(); } });
+}
+
+function setDest(p){
+  S.dest = p; $('destPicked').textContent = '→ '+p.name; $('destPicked').classList.remove('none');
+  $('calc').disabled = false; $('saveFav').classList.toggle('hidden', S.favs.some(f=>f.name===p.name));
+}
+function renderFavs(){
+  const box = $('favs'); box.innerHTML = '';
+  S.favs.forEach((f,i)=>{
+    const el = document.createElement('span'); el.className='fav';
+    const b = document.createElement('button'); b.textContent = '★ '+f.name; b.onclick = ()=>{ setDest(f); calculate(); };
+    const x = document.createElement('button'); x.className='x'; x.textContent='×'; x.setAttribute('aria-label', f.name+'を削除');
+    x.onclick = ()=>{ S.favs.splice(i,1); store.set('favs',S.favs); renderFavs(); };
+    el.append(b,x); box.appendChild(el);
+  });
+}
+function renderOrigin(){
+  document.querySelectorAll('#originSeg button').forEach(b=>b.classList.toggle('on', b.dataset.mode===S.originMode));
+  $('originSearch').classList.toggle('hidden', S.originMode!=='custom');
+  const pk = $('originPicked');
+  if(S.originMode==='here'){ pk.textContent='現在地を使います'; pk.classList.add('none'); }
+  else if(S.originMode==='home'){ pk.textContent = S.home ? '自宅: '+S.home.name : '自宅が未設定です（右上の⚙から設定）'; pk.classList.toggle('none', !S.home); }
+  else { pk.textContent = S.origin && !S.origin.here ? '出発: '+S.origin.name : '場所を検索して選んでください'; pk.classList.toggle('none', !(S.origin && !S.origin.here)); }
+}
+
+/* ---------- 初期化 ---------- */
+document.querySelectorAll('#originSeg button').forEach(b=>b.onclick=()=>{
+  S.originMode = b.dataset.mode; store.set('originMode', S.originMode);
+  if(S.originMode==='custom' && S.origin && S.origin.here) S.origin = null;
+  renderOrigin();
+});
+wireSearch('originQ','originGo','originResults', p=>{ S.origin=p; renderOrigin(); });
+wireSearch('destQ','destGo','destResults', setDest);
+wireSearch('homeQ','homeGo','homeResults', p=>{ S.home=p; store.set('home',p); $('homePicked').textContent='自宅: '+p.name; $('homePicked').classList.remove('none'); renderOrigin(); });
+$('saveFav').onclick = ()=>{ if(!S.dest) return; S.favs.push(S.dest); store.set('favs',S.favs); renderFavs(); $('saveFav').classList.add('hidden'); };
+$('calc').onclick = calculate;
+$('openSettings').onclick = ()=>$('settings').classList.remove('hidden');
+$('closeSettings').onclick = ()=>{ $('settings').classList.add('hidden'); if(S.result) render(); };
+$('settings').onclick = e=>{ if(e.target.id==='settings') $('closeSettings').onclick(); };
+$('apiKey').value = S.apiKey;
+$('apiKey').onchange = e=>{ S.apiKey = e.target.value.trim(); store.set('apiKey', S.apiKey); };
+$('useGuides').checked = S.useGuides;
+$('useGuides').onchange = e=>{ S.useGuides = e.target.checked; store.set('useGuides', S.useGuides); };
+$('showAndroid').checked = S.showAndroid;
+$('showAndroid').onchange = e=>{ S.showAndroid = e.target.checked; store.set('showAndroid', S.showAndroid); };
+if(S.home){ $('homePicked').textContent='自宅: '+S.home.name; $('homePicked').classList.remove('none'); }
+renderOrigin(); renderFavs();
+if('serviceWorker' in navigator && location.protocol==='https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
