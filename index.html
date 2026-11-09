@@ -118,7 +118,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
 
   <section class="card">
     <label class="lbl">目的地</label>
-    <div class="row"><input type="text" id="destQ" placeholder="例: 熊本城、長崎駅、別府" enterkeyhint="search"><button class="btn" id="destGo">検索</button></div>
+    <div class="row"><input type="text" id="destQ" placeholder="例: 熊本城、長崎県佐世保市棚方町120-115" enterkeyhint="search"><button class="btn" id="destGo">検索</button></div>
     <ul class="results-list hidden" id="destResults"></ul>
     <div class="picked none" id="destPicked">まだ選ばれていません</div>
     <div class="favs" id="favs"></div>
@@ -198,6 +198,7 @@ const ICS = [
 ];
 const VALHALLA = 'https://valhalla1.openstreetmap.de';
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
+const GSI_ADDR = 'https://msearch.gsi.go.jp/address-search/AddressSearch';
 
 /* ---------- 保存 ---------- */
 const store = {
@@ -262,7 +263,61 @@ async function valhalla(path, body){
 const loc = p => ({lat:p.lat, lon:p.lng});
 const AUTO_FREE = {auto:{use_tolls:0}};
 
+/* 住所らしい入力か（番地の数字や、都道府県・市区町村を含む） */
+const looksLikeAddress = q => /[0-9０-９]/.test(q) || /(都|道|府|県|市|区|町|村|丁目|番地)/.test(q);
+
+/* 住所の前処理: 郵便番号を除き、空白をそろえる */
+function cleanAddress(q){
+  return q.replace(/〒?\s*[0-9０-９]{3}\s*[-－ー−‐]\s*[0-9０-９]{4}/g, ' ')
+          .replace(/^(日本|日本国)[、,\s]*/, '')
+          .replace(/[\s　]+/g, ' ').trim();
+}
+/* 見つからないときに試す、短くした住所の候補（建物名・部屋番号・号などを順に外す） */
+function addressFallbacks(q){
+  const out = [];
+  const sp = q.indexOf(' ');
+  if(sp > 0) out.push(q.slice(0, sp));             // 建物名など、空白以降を外す
+  let s = sp > 0 ? q.slice(0, sp) : q;
+  for(let i=0;i<4;i++){
+    const t = s.replace(/[-－ー−‐の]?[0-9０-９一二三四五六七八九十〇]+(号|番地?|丁目)?$/, '');
+    if(t === s || t.length < 3) break;
+    out.push(t); s = t;
+  }
+  return out;
+}
+const HOME_REGION = {lat:33.59, lng:130.42};   // 福岡市付近。同名の地名は近い順に並べる
+
+/* 国土地理院の住所検索（キー不要・番地や号のレベルまで対応） */
+async function gsiQuery(q){
+  const r = await fetch(GSI_ADDR+'?q='+encodeURIComponent(q));
+  if(!r.ok) throw new Error('住所検索のエラー ('+r.status+')');
+  return r.json();
+}
+async function searchGsi(raw){
+  const q = cleanAddress(raw);
+  let j = await gsiQuery(q), approx = false;
+  if(!j.length){
+    for(const f of addressFallbacks(q)){ j = await gsiQuery(f); if(j.length){ approx = true; break; } }
+  }
+  return j.map(f=>({name:f.properties.title, lat:f.geometry.coordinates[1], lng:f.geometry.coordinates[0]}))
+    .sort((a,b)=>haversine(a,HOME_REGION)-haversine(b,HOME_REGION))
+    .slice(0,6)
+    .map(p=>Object.assign(p, {
+      addr: approx ? '住所（近くまで特定・家の前まではGoogleマップが案内）' : '住所（国土地理院）',
+      query: q }));
+}
+
 async function searchPlaces(q){
+  if(looksLikeAddress(q)){
+    // 住所は国土地理院を優先し、見つからなければ通常の検索も試す
+    const a = await searchGsi(q).catch(()=>[]);
+    const b = await searchByName(q).catch(()=>[]);
+    if(a.length || b.length) return a.concat(b);
+  }
+  return searchByName(q);
+}
+
+async function searchByName(q){
   if(S.apiKey){
     const r = await fetch('https://places.googleapis.com/v1/places:searchText', {
       method:'POST',
@@ -388,10 +443,12 @@ async function ensureShape(c, o){
 }
 
 /* ---------- 表示 ---------- */
+/* 住所で選んだ地点は、住所の文字列のままGoogleマップに渡す（号まで正確に案内されるように） */
+const placeParam = p => p.query ? p.query : ll(p);
 function mapsUrl(o, d, waypoints){
   const p = new URLSearchParams({api:'1', travelmode:'driving', dir_action:'navigate'});
-  if(o && !o.here) p.set('origin', ll(o));
-  p.set('destination', ll(d));
+  if(o && !o.here) p.set('origin', placeParam(o));
+  p.set('destination', placeParam(d));
   if(waypoints && waypoints.length) p.set('waypoints', waypoints.map(ll).join('|'));
   return 'https://www.google.com/maps/dir/?'+p.toString();
 }
@@ -467,7 +524,7 @@ function wireSearch(inputId, btnId, listId, onPick){
       items.forEach(it=>{
         const li = document.createElement('li');
         li.textContent = it.name; const s = document.createElement('small'); s.textContent = it.addr; li.appendChild(s);
-        li.onclick = ()=>{ list.classList.add('hidden'); onPick({name:it.name, lat:it.lat, lng:it.lng}); };
+        li.onclick = ()=>{ list.classList.add('hidden'); onPick({name:it.query || it.name, lat:it.lat, lng:it.lng, query:it.query}); };
         list.appendChild(li);
       });
     }catch(e){ list.innerHTML = ''; const li=document.createElement('li'); li.textContent=e.message; list.appendChild(li); }
