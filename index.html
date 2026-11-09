@@ -140,7 +140,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
       <label class="lbl">乗るIC（速い順）</label>
       <div id="icList"></div>
 
-      <a class="go main" id="goOne" target="_blank" rel="noopener">Googleマップで案内<small id="goOneSub"></small></a>
+      <a class="go main" id="goOne" target="_blank" rel="noopener">Googleマップで経路を見る<small id="goOneSub"></small></a>
 
       <div id="androidBox" class="hidden">
         <p class="note" style="margin-top:12px"><b>Android向け 2段階案内</b>（有料道路を使わない設定でICまで案内 → ICで2を押す）</p>
@@ -150,7 +150,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
         </div>
       </div>
 
-      <a class="go fastgo" id="goFast" target="_blank" rel="noopener">急ぐときは都市高速で案内<small>Googleマップのおまかせルート</small></a>
+      <a class="go fastgo" id="goFast" target="_blank" rel="noopener">急ぐときは都市高速の経路を見る<small>Googleマップのおまかせルート</small></a>
       <p class="note" id="guideNote"></p>
     </div>
   </section>
@@ -461,7 +461,8 @@ async function ensureShape(c, o){
 /* 住所で選んだ地点は、住所の文字列のままGoogleマップに渡す（号まで正確に案内されるように） */
 const placeParam = p => p.query ? p.query : ll(p);
 function mapsUrl(o, d, waypoints){
-  const p = new URLSearchParams({api:'1', travelmode:'driving', dir_action:'navigate'});
+  // dir_action=navigate を付けないので、いきなりナビ開始せず経路の確認画面が開く
+  const p = new URLSearchParams({api:'1', travelmode:'driving'});
   if(o && !o.here) p.set('origin', placeParam(o));
   p.set('destination', placeParam(d));
   if(waypoints && waypoints.length) p.set('waypoints', waypoints.map(ll).join('|'));
