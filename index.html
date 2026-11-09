@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>IC経由ナビ</title>
-<meta name="description" content="福岡都市高速を使わず、一般道でNEXCOのICまで行ってから高速に乗るルートをGoogleマップで案内します。">
+<meta name="description" content="福岡都市高速を使わず、NEXCOのICと一般道を組み合わせたルートをGoogleマップで案内します（行き・帰りの両方に対応）。">
 <meta name="theme-color" content="#0f6e56">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -98,7 +98,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
 <body>
 <main>
   <header>
-    <h1>IC経由ナビ<small>都市高速を避けて、一般道でICまで行く</small></h1>
+    <h1>IC経由ナビ<small>都市高速を避けて、ICと一般道で行き来する</small></h1>
     <button class="icon-btn" id="openSettings" aria-label="設定">⚙</button>
   </header>
 
@@ -131,7 +131,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
   <section id="result" class="hidden">
     <div class="engine" id="engine"></div>
     <div class="summary">
-      <div class="stat ic"><div class="k">ICまで一般道</div><div class="v" id="tIc">-</div><div class="s" id="sIc"></div></div>
+      <div class="stat ic"><div class="k" id="kIc">ICまで一般道</div><div class="v" id="tIc">-</div><div class="s" id="sIc"></div></div>
       <div class="stat fast"><div class="k">都市高速を使う</div><div class="v" id="tFast">-</div><div class="s" id="sFast"></div></div>
     </div>
     <div class="diff" id="diff"></div>
@@ -143,7 +143,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
       <a class="go main" id="goOne" target="_blank" rel="noopener">Googleマップで経路を見る<small id="goOneSub"></small></a>
 
       <div id="androidBox" class="hidden">
-        <p class="note" style="margin-top:12px"><b>Android向け 2段階案内</b>（有料道路を使わない設定でICまで案内 → ICで2を押す）</p>
+        <p class="note" style="margin-top:12px" id="androidNote"></p>
         <div class="steps">
           <a class="go sub" id="goStep1">① ICまで<small>有料道路なし</small></a>
           <a class="go sub" id="goStep2" target="_blank" rel="noopener">② ICから目的地<small>高速を使う</small></a>
@@ -168,7 +168,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
     </div>
     <div class="card">
       <label class="lbl">案内リンク</label>
-      <label class="chk"><input type="checkbox" id="useGuides" checked> ICまでのルートに経由地を入れて、都市高速に乗らないようにする</label>
+      <label class="chk"><input type="checkbox" id="useGuides" checked> 一般道の区間に経由地を入れて、都市高速に乗らないようにする</label>
       <label class="chk"><input type="checkbox" id="showAndroid"> Android向け2段階案内を常に表示</label>
     </div>
     <button class="btn primary" id="closeSettings">閉じる</button>
@@ -193,6 +193,7 @@ const ICS = [
 const VALHALLA = 'https://valhalla1.openstreetmap.de';
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 const OSRM = 'https://router.project-osrm.org';
+const CITY_CENTER = {lat:33.59, lng:130.40};   // 福岡市の中心付近。行き/帰りの判定に使う
 const GSI_ADDR ='https://msearch.gsi.go.jp/address-search/AddressSearch';
 
 /* ---------- 保存 ---------- */
@@ -258,14 +259,15 @@ async function valhalla(path, body){
 }
 const loc = p => ({lat:p.lat, lon:p.lng});
 
-/* 各IC→目的地の所要時間（秒）をOSRMで一括取得。ICの順位付けだけに使う */
-async function osrmLeg2(d){
-  const pts = ICS.concat([d]).map(p=>p.lng.toFixed(6)+','+p.lat.toFixed(6)).join(';');
-  const src = ICS.map((_,i)=>i).join(';');
-  const r = await fetch(OSRM+'/table/v1/driving/'+pts+'?sources='+src+'&destinations='+ICS.length+'&annotations=duration');
+/* 高速の区間（行き: 各IC→目的地 / 帰り: 出発地→各IC）の所要時間（秒）をOSRMで一括取得。ICの順位付けだけに使う */
+async function osrmFar(p, inbound){
+  const pts = ICS.concat([p]).map(q=>q.lng.toFixed(6)+','+q.lat.toFixed(6)).join(';');
+  const ics = ICS.map((_,i)=>i).join(';');
+  const qs = inbound ? 'sources='+ICS.length+'&destinations='+ics : 'sources='+ics+'&destinations='+ICS.length;
+  const r = await fetch(OSRM+'/table/v1/driving/'+pts+'?'+qs+'&annotations=duration');
   const j = await r.json();
   if(!r.ok || j.code!=='Ok') throw new Error(j.message || 'OSRM error');
-  return j.durations.map(row=>row[0]);
+  return inbound ? j.durations[0] : j.durations.map(row=>row[0]);
 }
 const AUTO_FREE = {auto:{use_tolls:0}};
 
@@ -389,47 +391,58 @@ async function calculate(){
     if(S.originMode==='here') S.origin = o;
     const d = S.dest;
 
-    // 1) 出発地→各IC（有料道路なし）。近距離なのでValhallaの一括計算で求める
+    // 向きの判定: 目的地のほうが福岡市の中心に近ければ「帰り道」。
+    //   行き（outbound）: 出発地 →一般道→ IC →高速→ 目的地
+    //   帰り（inbound） : 出発地 →高速→ IC →一般道→ 目的地
+    // 「一般道の区間」を local、「高速の区間」を far と呼ぶ
+    const inbound = haversine(d, CITY_CENTER) < haversine(o, CITY_CENTER);
+    const localLeg = ic => inbound ? [ic, d] : [o, ic];
+    const farLeg   = ic => inbound ? [o, ic] : [ic, d];
+
+    // 1) 一般道の区間（有料道路なし）を全ICぶん一括計算。福岡周辺の近距離なのでValhallaで求める
     let m1;
     try{
-      m1 = await valhalla('sources_to_targets', {sources:[loc(o)], targets:ICS.map(loc), costing:'auto', costing_options:AUTO_FREE});
+      m1 = inbound
+        ? await valhalla('sources_to_targets', {sources:ICS.map(loc), targets:[loc(d)], costing:'auto', costing_options:AUTO_FREE})
+        : await valhalla('sources_to_targets', {sources:[loc(o)], targets:ICS.map(loc), costing:'auto', costing_options:AUTO_FREE});
     }catch(e){
-      throw new Error('出発地から福岡周辺のICまでが遠すぎて計算できません（出発地は福岡周辺にしてください）');
+      throw new Error('福岡周辺のICから遠すぎて計算できません（出発地か目的地のどちらかは福岡周辺にしてください）');
     }
+    const localAt = i => inbound ? m1.sources_to_targets[i][0] : m1.sources_to_targets[0][i];
 
-    // 2) 各IC→目的地（高速あり）で、ICをおおまかに順位付けする。
+    // 2) 高速の区間で、ICをおおまかに順位付けする。
     //    Valhallaの一括計算は150km超でエラーになるため、距離制限のないOSRMを使う
-    const rough = await osrmLeg2(d).catch(()=>null);
+    const rough = await osrmFar(inbound ? o : d, inbound).catch(()=>null);
 
     let cands = ICS.map((ic,i)=>{
-      const a = m1.sources_to_targets[0][i];
+      const a = localAt(i);
       if(!a || a.time==null) return null;
       const r2 = rough ? rough[i] : 0;
       if(r2==null) return null;
-      return {ic, t1:a.time, d1:a.distance*1000, rough:a.time+r2};
+      return {ic, tl:a.time, dl:a.distance*1000, rough:a.time+r2};
     }).filter(Boolean).sort((x,y)=>x.rough-y.rough).slice(0,5);   // OSRMとValhallaで見積もりが少しずれるので多めに残す
     if(!cands.length) throw new Error('ICを経由するルートが見つかりませんでした');
 
-    // 3) 上位5つのIC→目的地と、都市高速を使うルートを、同じValhallaで正確に計算する（時間の比較をそろえるため）
+    // 3) 上位5つの高速区間と、都市高速を使うルートを、同じValhallaで正確に計算する（時間の比較をそろえるため）
     setStatus('上位のICを詳しく計算中…');
     const routeTime = async (a,b)=>{ const r = await valhalla('route', {locations:[loc(a),loc(b)], costing:'auto', directions_type:'none', units:'km'}); return r.trip.summary; };
-    const [direct, ...legs] = await Promise.all([routeTime(o,d)].concat(cands.map(c=>routeTime(c.ic,d).catch(()=>null))));
-    cands.forEach((c,i)=>{ const s = legs[i]; if(s){ c.t2 = s.time; c.d2 = s.length*1000; c.total = c.t1 + c.t2; } });
+    const [direct, ...legs] = await Promise.all([routeTime(o,d)].concat(cands.map(c=>routeTime(...farLeg(c.ic)).catch(()=>null))));
+    cands.forEach((c,i)=>{ const s = legs[i]; if(s){ c.tf = s.time; c.total = c.tl + c.tf; } });
     cands = cands.filter(c=>c.total!=null).sort((x,y)=>x.total-y.total).slice(0,4);
-    if(!cands.length) throw new Error('ICから目的地までのルートが見つかりませんでした');
+    if(!cands.length) throw new Error('ICを経由するルートが見つかりませんでした');
 
-    let res = {o, d, engine:'free',
+    let res = {o, d, inbound, engine:'free',
       fast:{time:direct.time, dist:direct.length*1000, toll:null},
       cands};
 
-    // 2) Google APIキーがあれば、上位2つのICとおまかせルートを渋滞込みで計算し直す
+    // Google APIキーがあれば、上位2つのICとおまかせルートを渋滞込みで計算し直す
     if(S.apiKey){
       setStatus('Googleで渋滞を反映中…');
       const fast = await googleRoute(o, d, false);
       res.fast = {time:fast.time, dist:fast.dist, toll:fast.toll};
       for(const c of res.cands.slice(0,2)){
-        const [g1, g2] = await Promise.all([googleRoute(o, c.ic, true), googleRoute(c.ic, d, false)]);
-        Object.assign(c, {t1:g1.time, t2:g2.time, total:g1.time+g2.time, d1:g1.dist, d2:g2.dist, shape:g1.shape, toll:g2.toll, google:true});
+        const [gl, gf] = await Promise.all([googleRoute(...localLeg(c.ic), true), googleRoute(...farLeg(c.ic), false)]);
+        Object.assign(c, {tl:gl.time, tf:gf.time, total:gl.time+gf.time, dl:gl.dist, shape:gl.shape, toll:gf.toll, google:true});
       }
       res.cands.sort((x,y)=>(y.google?1:0)-(x.google?1:0) || x.total-y.total);
       res.engine = 'google';
@@ -444,10 +457,11 @@ async function calculate(){
   }
 }
 
-/* ICまでの一般道ルートの形を取得（経由地をつくるため） */
-async function ensureShape(c, o){
+/* 一般道の区間のルートの形を取得（経由地をつくるため）。行きは出発地→IC、帰りはIC→目的地 */
+async function ensureShape(c, R){
   if(c.shape) return c.shape;
-  const r = await valhalla('route', {locations:[loc(o),loc(c.ic)], costing:'auto', costing_options:AUTO_FREE, directions_type:'none'});
+  const pts = R.inbound ? [c.ic, R.d] : [R.o, c.ic];
+  const r = await valhalla('route', {locations:pts.map(loc), costing:'auto', costing_options:AUTO_FREE, directions_type:'none'});
   c.shape = decodePolyline(r.trip.legs[0].shape, 6);
   return c.shape;
 }
@@ -473,8 +487,10 @@ async function render(){
   const c = R.cands[S.selected];
   $('result').classList.remove('hidden');
   $('engine').textContent = R.engine==='google' ? '所要時間: Google（渋滞反映）' : '所要時間は渋滞なしの目安です';
+  const inb = R.inbound;
+  $('kIc').textContent = inb ? 'ICで降りて一般道' : 'ICまで一般道';
   $('tIc').textContent = fmtTime(c.total);
-  $('sIc').textContent = c.ic.name+'まで '+fmtTime(c.t1);
+  $('sIc').textContent = inb ? c.ic.name+'から '+fmtTime(c.tl) : c.ic.name+'まで '+fmtTime(c.tl);
   $('tFast').textContent = fmtTime(R.fast.time);
   $('sFast').textContent = fmtKm(R.fast.dist) + (R.fast.toll!=null ? ' / 料金 約'+Math.round(R.fast.toll).toLocaleString()+'円' : '');
 
@@ -493,33 +509,46 @@ async function render(){
     el.className = 'ic-opt'+(i===S.selected?' on':'');
     el.innerHTML = '<span class="dot"></span><div><div class="nm"></div><div class="meta"></div></div><div class="tt"><span class="tot"></span><small></small></div>';
     el.querySelector('.nm').textContent = x.ic.name;
-    el.querySelector('.meta').textContent = x.ic.road+'・'+x.ic.area;
+    el.querySelector('.meta').textContent = inb ? x.ic.road+'で降りる' : x.ic.road+'・'+x.ic.area;
     el.querySelector('.tot').textContent = fmtTime(x.total);
-    el.querySelector('small').textContent = 'ICまで '+fmtTime(x.t1)+(R.engine==='google' && !x.google ? '（目安）' : '');
+    el.querySelector('small').textContent = (inb ? '降りてから ' : 'ICまで ')+fmtTime(x.tl)+(R.engine==='google' && !x.google ? '（目安）' : '');
     el.onclick = ()=>{ S.selected = i; render(); };
     $('icList').appendChild(el);
   });
 
   // 案内リンク
   const o = R.o, d = R.d;
+  // 経由地: 行きは [一般道上の点…, IC]、帰りは [IC, 一般道上の点…]
   let wps = [c.ic], note = '';
   if(S.useGuides){
     try{
-      const shape = await ensureShape(c, o);
-      const dist = c.d1 || 0;
+      const shape = await ensureShape(c, R);
+      const dist = c.dl || 0;
       const fr = dist > 18000 ? [0.33, 0.66] : (dist > 6000 ? [0.5] : []);
-      wps = pointsAlong(shape, fr).concat([c.ic]);
-      if(fr.length) note = 'ICまでの一般道ルート上に経由地を'+fr.length+'か所入れています。Googleマップで「経由地」と表示されますが、そのまま進んでOKです。';
+      const guides = pointsAlong(shape, fr);
+      wps = inb ? [c.ic].concat(guides) : guides.concat([c.ic]);
+      if(fr.length) note = (inb ? 'ICから先' : 'ICまで')+'の一般道ルート上に経由地を'+fr.length+'か所入れています。Googleマップで「経由地」と表示されますが、そのまま進んでOKです。';
     }catch(e){ note = '経由地の作成に失敗したため、ICだけを経由地にしています。'; }
   }
-  note += (note?' ':'')+'最後の経由地はICの入口なので、そこから高速に入ります。';
+  note += (note?' ':'')+(inb ? '最初の経由地はICの出口なので、そこで高速を降ります。' : '最後の経由地はICの入口なので、そこから高速に入ります。');
   $('guideNote').textContent = note;
   $('goOne').href = mapsUrl(o, d, wps);
-  $('goOneSub').textContent = c.ic.name+' から'+c.ic.road+'へ';
+  $('goOneSub').textContent = inb ? c.ic.road+'を'+c.ic.name+'で降りる' : c.ic.name+' から'+c.ic.road+'へ';
   $('goFast').href = mapsUrl(o, d, null);
   $('androidBox').classList.toggle('hidden', !(isAndroid || S.showAndroid));
-  $('goStep1').href = androidNavIntent(c.ic);
-  $('goStep2').href = mapsUrl(null, d, null);
+  if(inb){
+    $('androidNote').innerHTML = '<b>Android向け 2段階案内</b>（高速でICまで → ICで降りたら②を押す。②は有料道路を使わない設定）';
+    $('goStep1').href = mapsUrl(null, c.ic, null); $('goStep1').target = '_blank';
+    $('goStep1').innerHTML = '① ICまで<small>高速を使う</small>';
+    $('goStep2').href = androidNavIntent(d); $('goStep2').removeAttribute('target');
+    $('goStep2').innerHTML = '② ICから目的地<small>有料道路なし</small>';
+  }else{
+    $('androidNote').innerHTML = '<b>Android向け 2段階案内</b>（有料道路を使わない設定でICまで案内 → ICで②を押す）';
+    $('goStep1').href = androidNavIntent(c.ic); $('goStep1').removeAttribute('target');
+    $('goStep1').innerHTML = '① ICまで<small>有料道路なし</small>';
+    $('goStep2').href = mapsUrl(null, d, null); $('goStep2').target = '_blank';
+    $('goStep2').innerHTML = '② ICから目的地<small>高速を使う</small>';
+  }
 }
 
 /* ---------- 検索UI ---------- */
